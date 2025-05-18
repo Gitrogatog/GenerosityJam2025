@@ -1,0 +1,19 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Generosity Jam 2025", "Generosity Jam 2025.csproj", "{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+	Debug|Any CPU = Debug|Any CPU
+	ExportDebug|Any CPU = ExportDebug|Any CPU
+	ExportRelease|Any CPU = ExportRelease|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.ExportDebug|Any CPU.ActiveCfg = ExportDebug|Any CPU
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.ExportDebug|Any CPU.Build.0 = ExportDebug|Any CPU
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.ExportRelease|Any CPU.ActiveCfg = ExportRelease|Any CPU
+		{5F9E16D5-8581-4F4A-B84B-3BE8DE93F604}.ExportRelease|Any CPU.Build.0 = ExportRelease|Any CPU
+	EndGlobalSection
+EndGlobal
