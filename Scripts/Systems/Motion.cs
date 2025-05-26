@@ -1,205 +1,292 @@
 using System;
-using System.Collections.Generic;
 using Godot;
 using MoonTools.ECS;
 using MyECS.Components;
 using MyECS.Relations;
+using MyECS.Utility;
+
+namespace MyECS.Systems;
 
 public class Motion : MoonTools.ECS.System
 {
-    public Filter MotionFilter;
-    public Filter ColliderFilter;
-    public Filter StaticFilter;
+    Filter VelocityFilter;
+    Filter InteractFilter;
+    Filter SolidFilter;
+    Filter CollidesWithSolidsFilter;
 
-    const int CellSize = 16;
-    const float CellReciprocal = 1.0f / CellSize;
-    Dictionary<(int, int), HashSet<Entity>> SpatialHash = new Dictionary<(int, int), HashSet<Entity>>();
-
-    HashSet<Entity> PossibleCollisions = new HashSet<Entity>();
-
-    public (int x, int y) Bucket(Vector2 position)
-    {
-        return (
-            (int)MathF.Floor(position.X * CellReciprocal),
-            (int)MathF.Floor(position.Y * CellReciprocal)
-        );
-    }
-
-    public void Insert(Entity e)
-    {
-        var box = Get<AABB>(e);
-        var pos = Get<Position>(e).Value;
-
-        var minX = box.X + pos.X - box.Width * 0.5f;
-        var minY = box.Y + pos.Y - box.Height * 0.5f;
-        var maxX = box.X + pos.X + box.Width * 0.5f;
-        var maxY = box.Y + pos.Y + box.Height * 0.5f;
-
-        var minBucket = Bucket(new Vector2(minX, minY));
-        var maxBucket = Bucket(new Vector2(maxX, maxY));
-
-        for (int x = minBucket.x; x <= maxBucket.x; x++)
-        {
-            for (int y = minBucket.y; y <= maxBucket.y; y++)
-            {
-                var key = (x, y);
-                if (!SpatialHash.ContainsKey(key))
-                {
-                    SpatialHash.Add(key, new HashSet<Entity>());
-                }
-
-                SpatialHash[key].Add(e);
-            }
-        }
-    }
-
-    public void Retrieve(Entity e, Vector2 pos)
-    {
-        PossibleCollisions.Clear();
-        var box = Get<AABB>(e);
-
-        var minX = box.X + pos.X - box.Width * 0.5f;
-        var minY = box.Y + pos.Y - box.Height * 0.5f;
-        var maxX = box.X + pos.X + box.Width * 0.5f;
-        var maxY = box.Y + pos.Y + box.Height * 0.5f;
-
-        var minBucket = Bucket(new Vector2(minX, minY));
-        var maxBucket = Bucket(new Vector2(maxX, maxY));
-
-        for (int x = minBucket.x; x <= maxBucket.x; x++)
-        {
-            for (int y = minBucket.y; y <= maxBucket.y; y++)
-            {
-                var key = (x, y);
-                if (SpatialHash.ContainsKey(key))
-                {
-                    PossibleCollisions.UnionWith(SpatialHash[key]);
-                }
-            }
-        }
-    }
-
+    SpatialHash<Entity> InteractSpatialHash = new SpatialHash<Entity>(0, 0, 1000, 1000, 32);
+    SpatialHash<Entity> SolidSpatialHash = new SpatialHash<Entity>(0, 0, 1000, 1000, 32);
 
     public Motion(World world) : base(world)
     {
-        MotionFilter = FilterBuilder.Include<Velocity>().Include<Position>().Build();
-        ColliderFilter = FilterBuilder.Include<Position>().Include<AABB>().Build();
-        StaticFilter = FilterBuilder
-        .Include<Position>()
-        .Include<AABB>()
-        .Include<CheckForStaticCollisions>()
-        .Build();
+        VelocityFilter = FilterBuilder.Include<Position>().Include<Velocity>().Build();
+        InteractFilter = FilterBuilder.Include<Position>().Include<Rectangle>().Include<CanInteract>().Build();
+        SolidFilter = FilterBuilder.Include<Position>().Include<Rectangle>().Include<Solid>().Build();
+        CollidesWithSolidsFilter = FilterBuilder.Include<Position>().Include<Rectangle>().Include<CollidesWithSolids>().Build();
     }
 
-    public bool Overlaps(Vector2 posA, AABB boxA, Vector2 posB, AABB boxB)
+    void ClearCanBeHeldSpatialHash()
     {
-        var aMinX = boxA.X + posA.X - boxA.Width * 0.5f;
-        var aMinY = boxA.Y + posA.Y - boxA.Height * 0.5f;
-        var aMaxX = boxA.X + posA.X + boxA.Width * 0.5f;
-        var aMaxY = boxA.Y + posA.Y + boxA.Height * 0.5f;
-
-        var bMinX = boxB.X + posB.X - boxB.Width * 0.5f;
-        var bMinY = boxB.Y + posB.Y - boxB.Height * 0.5f;
-        var bMaxX = boxB.X + posB.X + boxB.Width * 0.5f;
-        var bMaxY = boxB.Y + posB.Y + boxB.Height * 0.5f;
-
-        bool overlaps = aMinX <= bMaxX &&
-                        aMaxX >= bMinX &&
-                        aMinY <= bMaxY &&
-                        aMaxY >= bMinY;
-
-        return overlaps;
+        InteractSpatialHash.Clear();
     }
 
-    public Vector2 Sweep(Entity e, Vector2 position, Vector2 velocity, AABB AABB)
+    void ClearSolidSpatialHash()
     {
-        var destX = position.X + velocity.X;
-        var destY = position.Y + velocity.Y;
+        SolidSpatialHash.Clear();
+    }
 
-        foreach (var other in ColliderFilter.Entities)
+    Rectangle GetWorldRect(Position p, Rectangle r)
+    {
+        return new Rectangle(p.X + r.X, p.Y + r.Y, r.Width, r.Height);
+    }
+
+    enum SolidCheck
+    {
+        Miss, HitEntity, HitTilemap
+    }
+
+    (Entity other, SolidCheck hit) CheckSolidCollision(Entity e, Rectangle rect)
+    {
+        if (LevelInfo.tilemap.Intersect(rect))
         {
-            var otherPos = Get<Position>(other).Value;
-            var otherBox = Get<AABB>(other);
-            if (e != other && Overlaps(new Vector2(destX, position.Y), AABB, otherPos, otherBox))
+            return (default, SolidCheck.HitTilemap);
+        }
+        foreach (var (other, otherRect) in SolidSpatialHash.Retrieve(e, rect))
+        {
+            if (rect.Intersects(otherRect))
             {
-                if (
-                    !Related<IgnoreSolidCollision>(other, e) &&
-                    !Related<IgnoreSolidCollision>(e, other) &&
-                    Has<SolidCollision>(e) &&
-                    Has<SolidCollision>(other)
-                    )
-                {
-                    destX = position.X;
-                    Relate(e, other, new Colliding(CollisionDirection.X, true));
-                    break;
-                }
-                Relate(e, other, new Colliding(CollisionDirection.X, false));
+                return (other, SolidCheck.HitEntity);
             }
         }
 
-        Retrieve(e, new Vector2(position.X, destY));
+        return (default, SolidCheck.Miss);
+    }
 
-        foreach (var other in ColliderFilter.Entities)
+    Position SweepTest(Entity e, float dt)
+    {
+        var velocity = Get<Velocity>(e);
+        var position = Get<Position>(e);
+        var r = Get<Rectangle>(e);
+
+        var movement = new Vector2(velocity.Value.X, velocity.Value.Y) * dt;
+        var targetPosition = position + movement;
+
+        var xEnum = new IntegerEnumerator(position.X, targetPosition.X);
+        var yEnum = new IntegerEnumerator(position.Y, targetPosition.Y);
+
+        int mostRecentValidXPosition = position.X;
+        int mostRecentValidYPosition = position.Y;
+
+        SolidCheck xHit = SolidCheck.Miss;
+        SolidCheck yHit = SolidCheck.Miss;
+
+        foreach (var x in xEnum)
         {
-            var otherPos = Get<Position>(other).Value;
-            var otherBox = Get<AABB>(other);
-            if (e != other && Overlaps(new Vector2(position.X, destY), AABB, otherPos, otherBox))
+            var newPos = new Position(x, position.Y);
+            var rect = GetWorldRect(newPos, r);
+
+            (var other, var hit) = CheckSolidCollision(e, rect);
+
+            xHit = hit;
+
+            if (xHit != SolidCheck.Miss && Has<CollidesWithSolids>(e)) //Has<Solid>(other) &&
             {
-
-                if (!Related<IgnoreSolidCollision>(other, e) &&
-                    !Related<IgnoreSolidCollision>(e, other) &&
-                    Has<SolidCollision>(e) &&
-                    Has<SolidCollision>(other))
-                {
-                    destY = position.Y;
-                    Relate(e, other, new Colliding(CollisionDirection.Y, true));
-                    break;
-                }
-
-                Relate(e, other, new Colliding(CollisionDirection.Y, false));
+                movement.X = mostRecentValidXPosition - position.X;
+                position = position.SetX(position.X); // truncates x coord
+                break;
             }
+
+            mostRecentValidXPosition = x;
         }
 
-        return new Vector2(destX, destY);
+        foreach (var y in yEnum)
+        {
+            var newPos = new Position(mostRecentValidXPosition, y);
+            var rect = GetWorldRect(newPos, r);
+
+            (var other, var hit) = CheckSolidCollision(e, rect);
+            yHit = hit;
+
+            if (yHit != SolidCheck.Miss && Has<CollidesWithSolids>(e)) // && Has<Solid>(other)
+            {
+                movement.Y = mostRecentValidYPosition - position.Y;
+                position = position.SetY(position.Y); // truncates y coord
+                break;
+            }
+
+            mostRecentValidYPosition = y;
+        }
+
+        return position + movement;
     }
 
     public override void Update(TimeSpan delta)
     {
+        ClearCanBeHeldSpatialHash();
+        ClearSolidSpatialHash();
 
-        if (Some<Pause>())
-            return;
-
-        var dt = (float)delta.TotalSeconds;
-
-        foreach (var entity in MotionFilter.Entities)
+        foreach (var entity in InteractFilter.Entities)
         {
-            var position = Get<Position>(entity).Value;
-            var velocity = Get<Velocity>(entity).Value;
+            var position = Get<Position>(entity);
+            var rect = Get<Rectangle>(entity);
 
-            var dest = position + velocity;
+            InteractSpatialHash.Insert(entity, GetWorldRect(position, rect));
+        }
 
-            if (HasOutRelation<FollowPosition>(entity))
+        foreach (var entity in InteractFilter.Entities)
+        {
+            foreach (var other in OutRelations<Colliding>(entity))
             {
-                var held = OutRelationSingleton<FollowPosition>(entity);
-                var data = GetRelationData<FollowPosition>(entity, held);
-                dest = Get<Position>(held).Value + data.Offset;
-                Set(entity, new Position(dest));
-                continue;
+                Unrelate<Colliding>(entity, other);
+            }
+        }
+
+        foreach (var entity in InteractFilter.Entities)
+        {
+            var position = Get<Position>(entity);
+            var rect = GetWorldRect(position, Get<Rectangle>(entity));
+
+            foreach (var (other, otherRect) in InteractSpatialHash.Retrieve(rect))
+            {
+                if (rect.Intersects(otherRect))
+                {
+                    Relate(entity, other, new Colliding());
+                }
+
+            }
+        }
+
+        foreach (var entity in SolidFilter.Entities)
+        {
+            var position = Get<Position>(entity);
+            var rect = Get<Rectangle>(entity);
+            SolidSpatialHash.Insert(entity, GetWorldRect(position, rect));
+        }
+
+        foreach (var entity in VelocityFilter.Entities)
+        {
+
+            var pos = Get<Position>(entity);
+            var vel = Get<Velocity>(entity).Value;
+
+            if (Has<AttemptJumpThisFrame>(entity))
+            {
+                if (Has<Grounded>(entity) && Has<CanJump>(entity))
+                {
+                    vel.Y = -Get<CanJump>(entity).Value;
+                    Remove<Grounded>(entity);
+                }
+
+                Remove<AttemptJumpThisFrame>(entity);
             }
 
-            if (Has<AABB>(entity))
+            if (Has<Gravity>(entity))
             {
-                dest = Sweep(entity, position, velocity * dt, Get<AABB>(entity));
+                if (Has<Grounded>(entity))
+                {
+                    vel.Y = MathF.Min(vel.Y, 0);
+                    Remove<Grounded>(entity); // removes grounded on all entities before checking again to see if they are grounded this frame
+                }
+                else
+                {
+                    float grav = Consts.GRAVITY; //Get<Gravity>(entity).Value;
+                    vel.Y = MathF.Min(vel.Y + grav * (float)delta.TotalSeconds, Consts.MAX_FALL_SPEED);
+                }
+
+            }
+            if (Has<IntendedMove>(entity) && Has<MoveSpeed>(entity))
+            {
+                vel.X = Get<IntendedMove>(entity).Value * Get<MoveSpeed>(entity).Value;
+                Remove<IntendedMove>(entity);
+            }
+
+            if (Has<Rectangle>(entity) && Has<CollidesWithSolids>(entity))
+            {
+                var result = SweepTest(entity, (float)delta.TotalSeconds);
+                Set(entity, result);
             }
             else
             {
-                dest = position + velocity * dt;
+                var scaledVelocity = vel * (float)delta.TotalSeconds;
+                Set(entity, pos + scaledVelocity);
             }
 
-            Set(entity, new Position(dest));
+            Set(entity, new Velocity(vel));
 
+
+            // update spatial hashes
+
+            if (Has<CanInteract>(entity))
+            {
+                var position = Get<Position>(entity);
+                var rect = Get<Rectangle>(entity);
+
+                InteractSpatialHash.Insert(entity, GetWorldRect(position, rect));
+            }
+
+            if (Has<Solid>(entity))
+            {
+                var position = Get<Position>(entity);
+                var rect = Get<Rectangle>(entity);
+                SolidSpatialHash.Insert(entity, GetWorldRect(position, rect));
+            }
         }
 
-    }
+        foreach (var entity in SolidFilter.Entities)
+        {
+            UnrelateAll<TouchingSolid>(entity);
+        }
 
+        foreach (var entity in CollidesWithSolidsFilter.Entities)
+        {
+            var position = Get<Position>(entity);
+            var rectangle = Get<Rectangle>(entity);
+
+            var leftPos = new Position(position.X - 1, position.Y);
+            var rightPos = new Position(position.X + 1, position.Y);
+            var upPos = new Position(position.X, position.Y - 1);
+            var downPos = new Position(position.X, position.Y + 1);
+
+            var leftRectangle = GetWorldRect(leftPos, rectangle);
+            var rightRectangle = GetWorldRect(rightPos, rectangle);
+            var upRectangle = GetWorldRect(upPos, rectangle);
+            var downRectangle = GetWorldRect(downPos, rectangle);
+
+            var (leftOther, leftCollided) = CheckSolidCollision(entity, leftRectangle);
+            var (rightOther, rightCollided) = CheckSolidCollision(entity, rightRectangle);
+            var (upOther, upCollided) = CheckSolidCollision(entity, upRectangle);
+            var (downOther, downCollided) = CheckSolidCollision(entity, downRectangle);
+
+            if (leftCollided == SolidCheck.HitEntity)
+            {
+                Relate(entity, leftOther, new TouchingSolid());
+            }
+
+            if (rightCollided == SolidCheck.HitEntity)
+            {
+                Relate(entity, rightOther, new TouchingSolid());
+            }
+
+            if (upCollided == SolidCheck.HitEntity)
+            {
+                Relate(entity, upOther, new TouchingSolid());
+            }
+            if (downCollided == SolidCheck.HitEntity)
+            {
+                Relate(entity, downOther, new TouchingSolid());
+            }
+            if (upCollided != SolidCheck.Miss && Has<Velocity>(entity))
+            {
+                Vector2 velocity = Get<Velocity>(entity).Value;
+                if (velocity.Y < 0)
+                {
+                    Set(entity, new Velocity(velocity.X, 0));
+                }
+            }
+            if (downCollided != SolidCheck.Miss && Has<Gravity>(entity))
+            {
+                Set(entity, new Grounded());
+            }
+        }
+    }
 }

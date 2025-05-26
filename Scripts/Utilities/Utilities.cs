@@ -1,7 +1,7 @@
 
 using System;
 using Godot;
-public static class Utilities
+public static class MathUtils
 {
     public static TimeSpan DeltaToTimeSpan(double delta)
     {
@@ -27,11 +27,16 @@ public static class Utilities
     }
     public static Vector2 Lerp(Vector2 a, Vector2 b, float t)
     {
-        return (a * t) + (b - a) * (1 - t);
+        return (1 - t) * a + t * b;
     }
     public static float Lerp(float a, float b, float t)
     {
-        return (a * t) + (b - a) * (1 - t);
+        return (1 - t) * a + t * b;
+    }
+    public static AABB BoxFromTopLeft(float X, float Y, float Width, float Height)
+    {
+        float centerX = X + Width * 0.5f;
+        return new AABB(X + Width * 0.5f, Y + Height * 0.5f, Width, Height);
     }
 }
 
