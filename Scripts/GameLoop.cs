@@ -20,12 +20,16 @@ public partial class GameLoop : Node2D
     [Export] float MaxFallSpeed;
     public override void _Ready()
     {
+        GlobalNodes.Root = this;
+        GlobalNodes.Camera = GetNode<Camera2D>("Camera2D");
+
         processGroup
             .Add(new TimedComponentSystem<RetainStateTimer>(World))
             .Add(new CountUpSystem<HoldJumpTimer>(World))
             .Add(new PlayerSMSystem(World))
             // .Add(new TestPlayerInputSystem(World))
             .Add(new Motion(World))
+            .Add(new ChangeRoomSystem(World))
             .Add(new RemoveComponentSystem<NewlySpawned>(World))
         ;
 
@@ -37,7 +41,7 @@ public partial class GameLoop : Node2D
         // EntityPrefabs.CreateTestPlayer(new Vector2(30, 40));
         levelJSON = new LoadLevelJSON(World, new Vector2I(16, 16));
         levelJSON.ReadFile(FilePathUtils.GlobalizePath(pathToLevelJson));
-        levelJSON.ReadLevel(0);
+        levelJSON.ReadWorld(0);
         // LevelInfo.tilemap = new CustomTilemap.Tilemap(100, new Vector2I(16, 16));
         // LevelInfo.tilemap.Resize(10, 10);
         // for (int i = 0; i < 10; i++)

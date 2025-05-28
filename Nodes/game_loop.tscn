@@ -10,3 +10,6 @@ MinJumpPower = 80.0
 MaxJumpPower = 150.0
 Gravity = 300.0
 MaxFallSpeed = 200.0
+
+[node name="Camera2D" type="Camera2D" parent="."]
+anchor_mode = 0

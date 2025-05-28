@@ -68,6 +68,10 @@ public class Tilemap
             Mathf.Clamp(endY, 0, yTiles - 1))
         );
     }
+    public Vector2I PosToTile(Vector2I position)
+    {
+        return position / tileSize;
+    }
     public bool Intersect(Rectangle box)
     {
         //new Rect2(box.X, box.Y, box.Width, box.Height)

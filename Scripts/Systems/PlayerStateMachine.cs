@@ -10,8 +10,8 @@ public class PlayerSMSystem : StateMachineSystem<PlayerState>
     Filter PlayerFilter;
     float MaxJumpPower = 300f;
     float MinJumpPower = 200f;
-    float MaxJumpTime = 2f;
-    float LandTime = 1f;
+    float MaxJumpTime = 1f;
+    float LandTime = 0.2f;
     public PlayerSMSystem(World world) : base(world)
     {
         PlayerFilter = FilterBuilder.Include<PlayerState>().Build();

@@ -1,7 +1,9 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.IO;
+using System.Xml;
 using CustomTilemap;
 using Godot;
 using ldtk;
@@ -17,6 +19,7 @@ public class LoadLevelJSON
     string[] tileIDToSlopeName;
     Vector2I[] tileIDToSlopeTile;
     Dictionary<string, Vector2I> slopeNameToTile = new Dictionary<string, Vector2I>();
+    List<Vector2I> worldBounds = new List<Vector2I>();
 
     int maxTileCount;
     int slopeTileSourceID;
@@ -42,30 +45,45 @@ public class LoadLevelJSON
     public void InitTilemap()
     {
         maxTileCount = 0;
+        int maxWidth = 0;
+        int maxHeight = 0;
+        Vector2I roomSizeInPixels = Consts.ROOM_SIZE * tileSize;
         foreach (ldtk.World w in jsonObject.Worlds)
         {
+            int worldWidth = 0;
+            int worldHeight = 0;
             foreach (Level level in w.Levels)
             {
-                foreach (LayerInstance layerInstance in level.LayerInstances)
-                {
-                    maxTileCount = Mathf.Max(maxTileCount, (int)(layerInstance.CHei * layerInstance.CWid));
-                }
+                Vector2I worldPos = new Vector2I((int)level.WorldX + 1, (int)level.WorldY + 1);
+                Vector2I endTilePos = worldPos * Consts.ROOM_SIZE;
+                worldWidth = Math.Max(endTilePos.X, maxWidth);
+                worldHeight = Math.Max(endTilePos.Y, maxHeight);
+                // foreach (LayerInstance layerInstance in level.LayerInstances)
+                // {
+                //     maxTileCount = Mathf.Max(maxTileCount, (int)(layerInstance.CHei * layerInstance.CWid));
+                // }
             }
+            worldBounds.Add(new Vector2I(worldWidth, worldHeight));
+            maxWidth = Math.Max(maxWidth, worldWidth);
+            maxHeight = Math.Max(maxHeight, worldHeight);
         }
-        tilemap = new Tilemap(maxTileCount, tileSize);
+        tilemap = new Tilemap(maxWidth * maxHeight, tileSize);
         LevelInfo.tilemap = tilemap;
     }
 
-    public void ReadLevel(int id)
+
+    public void ReadWorld(int id)
     {
-        // if (jsonObject.Levels.Length <= id)
-        // {
-        //     GD.Print("Level out of bounds!");
-        // }
-        // else
+        ldtk.World world = jsonObject.Worlds[id];
+        tilemap.ClearTilemap();
+        Vector2I bounds = worldBounds[id];
+        tilemap.Resize(bounds.X, bounds.Y);
+        foreach (Level level in world.Levels)
         {
-            ReadLevel(jsonObject.Worlds[0].Levels[id]);
+            ReadLevel(level);
+            GD.Print($"reading level {level.Identifier}");
         }
+
     }
     void ReadLevel(Level level)
     {
@@ -75,18 +93,14 @@ public class LoadLevelJSON
         }
 
         LayerInstance layerInstance = GetLayerInstanceByName(level, "Collision");
-
-        tilemap.Resize((int)layerInstance.CWid, (int)layerInstance.CHei);
-        tilemap.ClearTilemap();
         // LoadSpriteTilesFromTileLayer(layerInstance);
-        LoadTilesFromIntGrid(layerInstance);
+        LoadTilesFromIntGrid(layerInstance, new Vector2I((int)level.WorldX, (int)level.WorldY) / tileSize);
 
         layerInstance = GetLayerInstanceByName(level, "Entities");
         foreach (EntityInstance entityInstance in layerInstance.EntityInstances)
         {
             ReadEntity(entityInstance);
         }
-
     }
     LayerInstance GetLayerInstanceByName(Level level, string name)
     {
@@ -99,13 +113,16 @@ public class LoadLevelJSON
         }
         return null;
     }
-    void LoadTilesFromIntGrid(LayerInstance layerInstance) // loads in the collision tile data from the "Collision" int grid layer
+    void LoadTilesFromIntGrid(LayerInstance layerInstance, Vector2I offset) // loads in the collision tile data from the "Collision" int grid layer
     {
+        int roomX = Consts.ROOM_SIZE.X;
         for (int i = 0; i < layerInstance.IntGridCsv.Length; i++)
         {
             if ((int)layerInstance.IntGridCsv[i] != 0)
             {
-                tilemap.Tiles[i] = TileType.Full;
+                int x = i % roomX + offset.X;
+                int y = i / roomX + offset.Y;
+                tilemap.Tiles[tilemap.GetIndex(x, y)] = TileType.Full;
             }
         }
     }
